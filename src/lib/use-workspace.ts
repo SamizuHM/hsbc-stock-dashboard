@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { get, set } from 'idb-keyval';
+import { get, set, setMany } from 'idb-keyval';
+import { WorkspaceBackup } from './workspace-backup';
 import { toast } from 'sonner';
 import { Dataset, Preferences, AlertRule, Market, defaultPreferences } from './types';
 import { demoDataset } from './demo';
@@ -129,6 +130,17 @@ export function useWorkspace() {
     setAlertsState(next);
     alertRef.current = next;
     void set('ledgerlens-alerts', next);
+  }
+  async function restoreWorkspace(backup: WorkspaceBackup) {
+    await setMany([
+      ['ledgerlens-preferences', backup.preferences],
+      ['ledgerlens-alerts', backup.alerts],
+      ['ledgerlens-personal-backup', backup.personalBackup],
+    ]);
+    prefsRef.current = backup.preferences;
+    alertRef.current = backup.alerts;
+    setPrefsState(backup.preferences);
+    setAlertsState(backup.alerts);
   }
   function evaluateAlerts(next: Dataset) {
     const rows = positions(next);
@@ -298,6 +310,7 @@ export function useWorkspace() {
     status,
     setPrefs,
     setAlerts,
+    restoreWorkspace,
     persist,
     refresh,
     fetchMarket,

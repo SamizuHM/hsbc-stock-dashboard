@@ -1,8 +1,22 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, FileUp, ClipboardPaste, Check, Database } from 'lucide-react';
 import { toast } from 'sonner';
-import { Dataset, Notice, marketDay, noticeSchema, identity } from '@/lib/types';
+import {
+  Dataset,
+  Notice,
+  Preferences,
+  AlertRule,
+  marketDay,
+  noticeSchema,
+  identity,
+} from '@/lib/types';
+import {
+  createWorkspaceBackup,
+  readPersonalBackup,
+  parseWorkspaceBackup,
+  WorkspaceBackup,
+} from '@/lib/workspace-backup';
 import {
   ImportCandidate,
   fromLegacy,
@@ -12,13 +26,13 @@ import {
 } from '@/lib/importers/hsbc';
 import { Drawer } from './ui';
 
-export function exportJson(data: Dataset) {
+export function exportJson(data: Dataset & { workspaceBackup?: WorkspaceBackup }) {
   const a = document.createElement('a'),
     url = URL.createObjectURL(
       new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
     );
   a.href = url;
-  a.download = `交易記錄-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `${data.workspaceBackup ? '工作區完整備份' : '交易記錄'}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
@@ -55,6 +69,9 @@ export default function DataPanel({
   open,
   onOpenChange,
   data,
+  prefs,
+  alerts,
+  onRestoreWorkspace,
   onSave,
   localAvailable,
   onSource,
@@ -62,6 +79,9 @@ export default function DataPanel({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   data: Dataset;
+  prefs: Preferences;
+  alerts: AlertRule[];
+  onRestoreWorkspace: (backup: WorkspaceBackup) => Promise<void>;
   onSave: (d: Dataset) => void;
   localAvailable: boolean;
   onSource: (m: 'demo' | 'local') => Promise<void>;
@@ -69,9 +89,28 @@ export default function DataPanel({
   const [text, setText] = useState(''),
     [candidates, setCandidates] = useState<ImportCandidate[]>([]),
     [busy, setBusy] = useState(false),
+    [savingLocal, setSavingLocal] = useState(false),
     [message, setMessage] = useState(''),
     [backup, setBackup] = useState<Dataset | null>(null),
+    [workspaceBackup, setWorkspaceBackup] = useState<WorkspaceBackup | null>(null),
+    [restoreSettings, setRestoreSettings] = useState(true),
+    [personalForExport, setPersonalForExport] = useState<Dataset | null | undefined>(undefined),
     fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setPersonalForExport(undefined);
+    void readPersonalBackup()
+      .then((saved) => {
+        if (!cancelled) setPersonalForExport(saved);
+      })
+      .catch(() => {
+        if (!cancelled) setMessage('無法讀取完整備份資料，請確認本機儲存可用後重新開啟面板。');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, data.mode]);
   const existing = new Set(data.mode === 'demo' ? [] : data.notices.map(identity));
   function checked(c: ImportCandidate) {
     const n = { ...c.notice };
@@ -94,11 +133,20 @@ export default function DataPanel({
     setMessage('');
     const rows: ImportCandidate[] = [];
     setBackup(null);
+    setWorkspaceBackup(null);
+    setRestoreSettings(true);
     for (const file of [...files]) {
       try {
         if (files.length === 1 && /\.json$/i.test(file.name)) {
           const parsed = JSON.parse(await file.text());
-          if (parsed.version === 1 && parsed.markets) setBackup(fromLegacy(parsed));
+          if (parsed.version === 1 && parsed.markets) {
+            const dataset = fromLegacy(parsed);
+            const extras = parsed.workspaceBackup
+              ? parseWorkspaceBackup(parsed.workspaceBackup)
+              : null;
+            setBackup(dataset);
+            setWorkspaceBackup(extras);
+          }
         }
         rows.push(...(await parseFile(file)));
       } catch (e) {
@@ -113,7 +161,7 @@ export default function DataPanel({
       rows.map((r, j) => (i === j ? { ...r, notice: { ...r.notice, ...patch }, errors: [] } : r)),
     );
   }
-  function confirm() {
+  async function confirm() {
     const accepted = candidates.map((c) => checked(c));
     if (accepted.some((r) => !r.success)) {
       setMessage('請修正所有紅色欄位，或移除無法辨識的通知');
@@ -135,6 +183,14 @@ export default function DataPanel({
             }
           : data,
       result = mergeNotices(base.notices, rows);
+    if (workspaceBackup && restoreSettings) {
+      try {
+        await onRestoreWorkspace(workspaceBackup);
+      } catch {
+        setMessage('設定還原失敗；請保留備份，確認瀏覽器可使用本機儲存後再試。');
+        return;
+      }
+    }
     onSave({
       ...base,
       notices: result.notices,
@@ -151,6 +207,7 @@ export default function DataPanel({
     setCandidates([]);
     setText('');
     setBackup(null);
+    setWorkspaceBackup(null);
     setMessage(`新增 ${result.added} 筆；${rows.length - result.added} 筆重複已略過。`);
     toast.success(`已合併 ${result.added} 筆通知`);
   }
@@ -174,10 +231,53 @@ export default function DataPanel({
         <span className="pill">{data.mode === 'demo' ? 'DEMO' : 'PRIVATE'}</span>
       </div>
       <div className="button-row">
-        <button onClick={() => exportJson(data)}>
+        <button
+          disabled={personalForExport === undefined}
+          onClick={() => {
+            if (personalForExport === undefined) return;
+            try {
+              // 同步回應使用者點擊，避免瀏覽器阻擋非手勢觸發的下載。
+              exportJson(createWorkspaceBackup(data, prefs, alerts, personalForExport));
+              toast.success('已開始下載完整備份，請確認瀏覽器下載完成');
+            } catch {
+              toast.error('完整備份失敗，請確認瀏覽器允許下載後重試');
+            }
+          }}
+        >
           <Download size={15} />
-          完整 JSON 備份
+          {personalForExport === undefined ? '正在準備備份…' : '完整 JSON 備份'}
         </button>
+        {localAvailable && (
+          <button
+            disabled={personalForExport === undefined || savingLocal}
+            onClick={async () => {
+              if (personalForExport === undefined) return;
+              setSavingLocal(true);
+              try {
+                const response = await fetch('/api/local-backup', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(
+                    createWorkspaceBackup(data, prefs, alerts, personalForExport),
+                  ),
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error ?? '本機備份失敗');
+                setMessage(`已保存到 ${result.path}，包含交易、行情、資金流水、設定與提醒。`);
+                toast.success('完整备份已保存到本機 private/browser');
+              } catch (error) {
+                setMessage(
+                  error instanceof Error ? error.message : '本機備份失敗，請重試或下載 JSON',
+                );
+              } finally {
+                setSavingLocal(false);
+              }
+            }}
+          >
+            <Database size={15} />
+            {savingLocal ? '正在保存…' : '保存到本機 private/browser'}
+          </button>
+        )}
         <button onClick={() => exportCsv(data)}>通知 CSV</button>
         <button onClick={() => void onSource(data.mode === 'demo' ? 'local' : 'demo')}>
           {data.mode === 'demo'
@@ -204,7 +304,7 @@ export default function DataPanel({
           <FileUp size={27} />
           <strong>{busy ? '正在解析…' : '選擇郵件或交易備份'}</strong>
           <span>.eml 原始郵件 · .txt 正文 · .json 交易備份</span>
-          <small>最多 100 個檔案 / 30 MB，每個檔案不超過 5 MB</small>
+          <small>最多 100 個檔案 / 30 MB，郵件單檔 5 MB，JSON 備份單檔 30 MB</small>
         </button>
         <details className="help">
           <summary>沒有 .eml 或 Excel 也可以匯入</summary>
@@ -232,6 +332,7 @@ export default function DataPanel({
           onClick={() => {
             if (!text.trim()) return;
             setBackup(null);
+            setWorkspaceBackup(null);
             setCandidates([parseText(text)]);
             setMessage('');
           }}
@@ -241,7 +342,7 @@ export default function DataPanel({
           解析並預覽
         </button>
       </section>
-      {!!candidates.length && (
+      {(!!candidates.length || !!backup) && (
         <section className="settings-section">
           <div className="section-heading">
             <h3>
@@ -255,6 +356,17 @@ export default function DataPanel({
             <p className="inline-note">
               這是完整備份：確認後還原其中的行情、本金與資金流水。原有交易會合併保留。
             </p>
+          )}
+          {workspaceBackup && (
+            <label className="inline-note">
+              <input
+                type="checkbox"
+                checked={restoreSettings}
+                onChange={(e) => setRestoreSettings(e.target.checked)}
+              />
+              同時還原顯示設定、匯率、其他月成交額、{workspaceBackup.alerts.length}{' '}
+              個提醒及切換示例前的資料副本。 提醒保留備份當時的啟用狀態。
+            </label>
           )}
           <div className="candidate-list">
             {candidates.map((c, i) => {
@@ -374,8 +486,9 @@ export default function DataPanel({
         </p>
       )}
       <p className="muted small">
-        匯出的備份包含個人交易，請自行保管。清除瀏覽器資料會移除本機匯入記錄，建議定期備份。已接入的本機檔案每
-        60 秒檢查一次更新。
+        完整備份包含交易、行情、入出金、股息、顯示設定、匯率、其他月成交額、提醒及切換示例前的私人資料副本。
+        下載的 JSON 放在瀏覽器指定的位置；已連接本機資料時，也可直接保存至專案 private/browser。
+        清除瀏覽器資料會移除本機匯入與補錄，建議定期備份。已接入的本機檔案每 60 秒檢查一次更新。
       </p>
     </Drawer>
   );

@@ -59,7 +59,7 @@ npm start
 
 `.eml` 是郵件的原始檔案，含郵件標頭和正文。若郵箱有「下載原文／另存為」，可以保存後批量選取。找不到匯出功能時可先用正文貼上，無須券商 Excel。
 
-- 每批最多 100 個檔案、總計 30 MB，單檔 5 MB。
+- 每批最多 100 個檔案、總計 30 MB；郵件單檔 5 MB，JSON 備份單檔 30 MB。
 - `postal-mime` 解碼 MIME，規則解析器提取明確欄位。
 - 僅使用**本次成交數量**入帳，累計量只參與通知識別。
 - 同一訂單的分批成交分別保留；完全相同通知不重複入帳。
@@ -72,9 +72,30 @@ npm start
 cp .env.example .env.local
 ```
 
-在 `.env.local` 填入自己的舊版 `dashboard.json` 絕對路徑。可选 `PRIVATE_PERFORMANCE_FILE` 指向含 `initial_cash_usd` 和 `cash_flows_complete` 的 JSON。此文件应由你本機创建，项目不附带任何個人本金。
+在 `.env.local` 填入自己的舊版 `dashboard.json` 路徑，可使用以專案目錄為基準的相對路徑。可选 `PRIVATE_PERFORMANCE_FILE` 指向含 `initial_cash_usd` 和 `cash_flows_complete` 的 JSON。此文件应由你本機创建，项目不附带任何個人本金。
 
 本機橋接每 60 秒查看檔案更新，合併新通知並保留瀏覽器補錄的資金流水。既有郵件抓取排程繼續更新原來的檔案即可，不需要重新抓取所有舊郵件。開源應用自身不登入或抓取郵箱。
+
+### 4. 完整備份與搬家
+
+「資料與匯入 → 完整 JSON 備份」同時保存交易、行情、入出金、股息、期初本金、顯示設定、匯率、其他月成交額、提醒及切換示例前的私人副本。檔案下載到瀏覽器指定的位置，建議自行移入 `private/browser/`；連接本機資料時也可點選「保存到本機 private/browser」，直接保存帶時間的備份。重新匯入 JSON 時先預覽交易，可選是否同時還原設定和提醒；舊版只含交易的 JSON 仍可匯入。
+
+若使用本機資料橋接，建議把資料源與同步腳本放在 `private/`，例如：
+
+```text
+private/
+  hsbc_history/     原始交易主檔、行情快取、同步進度與更新腳本
+  browser/          瀏覽器完整 JSON 備份
+  archive/          搬家前的原始資料及舊版快照
+.env.local          只填本機私有路徑
+```
+
+```dotenv
+PRIVATE_DATA_FILE=./private/hsbc_history/data/dashboard.json
+PRIVATE_PERFORMANCE_FILE=./private/hsbc_history/data/performance_settings.json
+```
+
+`private/` 和 `.env.local` 已被 Git 忽略，**不會跟著 GitHub clone 回來**。換電腦時需要另外攜帶這些檔案，以及尚未匯出的瀏覽器資料。刪除舊目錄前，先改好檔案引用和外部排程，核對備份內容，再重啟本機服務。請為 `private/` 保留另一份磁碟或加密備份；同一硬碟內搬移不是防硬碟故障的備份。
 
 ## 資料与界面分離
 

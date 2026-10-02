@@ -576,6 +576,12 @@ export default function Dashboard() {
         onOpenChange={setDataOpen}
         data={data}
         onSave={w.persist}
+        prefs={prefs}
+        alerts={w.alerts}
+        onRestoreWorkspace={async (backup) => {
+          await w.restoreWorkspace(backup);
+          if (backup.selectedSymbol) setSelected(backup.selectedSymbol);
+        }}
         localAvailable={w.localAvailable}
         onSource={w.selectSource}
       />

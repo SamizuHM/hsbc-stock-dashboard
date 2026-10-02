@@ -243,7 +243,8 @@ export function parseText(raw: string, source = '貼上正文', mailDate?: strin
   return { source, notice, errors };
 }
 export async function parseFile(file: File): Promise<ImportCandidate[]> {
-  if (file.size > 5 * 1024 * 1024) throw new Error(`${file.name} 超過 5 MB`);
+  const limit = /\.json$/i.test(file.name) ? 30 : 5;
+  if (file.size > limit * 1024 * 1024) throw new Error(`${file.name} 超過 ${limit} MB`);
   if (/\.eml$/i.test(file.name)) {
     const email = await PostalMime.parse(await file.arrayBuffer());
     let body = email.text ?? '';

@@ -7,6 +7,22 @@ import { demoDataset } from './demo';
 import { mergeNotices, fromLegacy } from './importers/hsbc';
 import { positions } from './ledger';
 
+function mergeMarkets(saved: Record<string, Market>, incoming: Record<string, Market>) {
+  const result = { ...saved };
+  for (const [symbol, market] of Object.entries(incoming)) {
+    const previous = saved[symbol];
+    const previousDay = previous?.bars.at(-1)?.time ?? '';
+    const incomingDay = market.bars.at(-1)?.time ?? '';
+    const newer =
+      !previous ||
+      incomingDay > previousDay ||
+      (incomingDay === previousDay &&
+        Date.parse(market.fetchedAt ?? '') >= Date.parse(previous.fetchedAt ?? ''));
+    if (newer) result[symbol] = market;
+  }
+  return result;
+}
+
 export function useWorkspace() {
   const [data, setData] = useState<Dataset>(demoDataset),
     [prefs, setPrefsState] = useState<Preferences>(defaultPreferences),
@@ -64,6 +80,7 @@ export function useWorkspace() {
                   initialCash: stored.initialCash ?? local.initialCash,
                   cashFlowsComplete: stored.cashFlowsComplete,
                   cashEvents: stored.cashEvents,
+                  markets: mergeMarkets(stored.markets, local.markets),
                 }
               : local,
           );
@@ -95,7 +112,7 @@ export function useWorkspace() {
             initialCash: current.initialCash,
             cashFlowsComplete: current.cashFlowsComplete,
             cashEvents: current.cashEvents,
-            markets: { ...current.markets, ...local.markets },
+            markets: mergeMarkets(current.markets, local.markets),
           });
           setStatus('本機交易檔已增量同步');
         }
@@ -266,6 +283,7 @@ export function useWorkspace() {
             initialCash: backup.initialCash ?? local.initialCash,
             cashFlowsComplete: backup.cashFlowsComplete,
             cashEvents: backup.cashEvents,
+            markets: mergeMarkets(backup.markets, local.markets),
           }
         : local,
     );

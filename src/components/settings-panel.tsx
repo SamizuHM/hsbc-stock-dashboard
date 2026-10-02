@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Preferences } from '@/lib/types';
 import { Drawer, Toggle } from './ui';
 export default function SettingsPanel({
@@ -15,6 +15,7 @@ export default function SettingsPanel({
 }) {
   const [periods, setPeriods] = useState(prefs.maPeriods.join(',')),
     [error, setError] = useState('');
+  useEffect(() => setPeriods(prefs.maPeriods.join(',')), [prefs.maPeriods]);
   return (
     <Drawer
       open={open}

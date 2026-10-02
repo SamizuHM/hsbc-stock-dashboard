@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+.env*
+!.env.example
+*.tsbuildinfo
+.DS_Store
+private/
+data/
+*.eml
+*.mbox
+*.csv
+*.xlsx
+*.zip
+*.log
+
